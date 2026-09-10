@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<title>Rutina 3+1</title>
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1">
+<meta name="description" content="Registro de entrenamiento de gimnasio con progresión automática. Funciona sin conexión y guarda los datos en el móvil.">
+<meta name="theme-color" content="#0f1115">
+<meta name="color-scheme" content="dark">
+
+<!-- iPhone: pantalla de inicio -->
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Rutina 3+1">
+<link rel="apple-touch-icon" href="iconos/icono-180.png">
+
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="iconos/icono-192.png">
+<link rel="stylesheet" href="css/estilos.css">
+</head>
+<body>
+
+<header class="top"><div id="titulo"></div></header>
+
+<main id="contenido"></main>
+
+<nav class="tabs">
+  <a href="#/hoy" data-raiz="#/hoy"><span class="ic">&#127947;</span>Hoy</a>
+  <a href="#/calendario" data-raiz="#/calendario"><span class="ic">&#128197;</span>Calendario</a>
+  <a href="#/ejercicios" data-raiz="#/ejercicio"><span class="ic">&#128200;</span>Ejercicios</a>
+  <a href="#/ajustes" data-raiz="#/ajustes"><span class="ic">&#9881;</span>Ajustes</a>
+</nav>
+
+<div class="toast" id="toast"></div>
+
+<script src="js/rutina.js"></script>
+<script src="js/datos.js"></script>
+<script src="js/progresion.js"></script>
+<script src="js/volumen.js"></script>
+<script src="js/graficas.js"></script>
+<script src="js/app.js"></script>
+<script>
+  if ('serviceWorker' in navigator) {
+    // ¿ya había una versión controlando la página al cargar?
+    var habiaControlador = !!navigator.serviceWorker.controller;
+    var recargando = false;
+
+    // cuando entra una versión nueva, se recarga una vez sola
+    navigator.serviceWorker.addEventListener('controllerchange', function () {
+      if (!habiaControlador || recargando) return;
+      recargando = true;
+      location.reload();
+    });
+
+    window.addEventListener('load', function () {
+      navigator.serviceWorker.register('sw.js').then(function (reg) {
+        reg.update();
+      }).catch(function (e) {
+        console.log('Sin service worker (normal si abres por http sin cifrar):', e.message);
+      });
+    });
+  }
+</script>
+</body>
+</html>

@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<title>Diagnóstico · Rutina 3+1</title>
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="dark">
+<link rel="stylesheet" href="css/estilos.css">
+<style>
+  main{padding-bottom:40px}
+  .kv{display:flex;gap:10px;padding:8px 0;border-bottom:1px solid var(--borde);font-size:14px}
+  .kv:last-child{border-bottom:0}
+  .kv b{flex:0 0 120px;color:var(--suave);font-weight:600;font-size:13px}
+  .kv span{flex:1;min-width:0;word-break:break-word}
+  code{background:var(--panel2);padding:1px 5px;border-radius:5px;font-size:13px}
+  .ok{color:var(--ok)} .mal{color:#ff6b6b} .ojo{color:var(--acento)}
+</style>
+</head>
+<body>
+<header class="top"><div id="titulo"><span>
+  <span style="display:block;font-size:20px;font-weight:800">Diagnóstico</span>
+  <span class="sub">qué está pasando de verdad en este navegador</span>
+</span></div></header>
+
+<main>
+  <div id="veredicto"></div>
+  <div class="tarjeta"><h3>Dónde estás</h3><div id="origen"></div></div>
+  <div class="tarjeta"><h3>Datos guardados</h3><div id="datos"></div></div>
+  <div class="tarjeta"><h3>Versión que sirve el navegador</h3><div id="version"></div></div>
+  <div class="tarjeta"><h3>Service worker y cachés</h3><div id="sw"></div>
+    <div style="height:10px"></div>
+    <button class="btn sec linea" id="limpiar">Desregistrar service worker y borrar cachés</button>
+    <p class="peque suave">No toca tus entrenos: solo la copia de la app. Después, recarga.</p>
+  </div>
+  <a class="btn sec linea" href="pruebas/v1/" style="text-align:center;text-decoration:none;display:block;padding:14px;margin-bottom:10px">Abrir la copia v1 (solo en el PC)</a>
+  <a class="btn sec linea" href="index.html" style="text-align:center;text-decoration:none;display:block;padding:14px">Ir a la app</a>
+</main>
+
+<script>
+const $ = id => document.getElementById(id);
+const esc = s => String(s).replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
+const fila = (k, v) => `<div class="kv"><b>${k}</b><span>${v}</span></div>`;
+const avisos = [];
+
+/* --- origen --- */
+$('origen').innerHTML =
+  fila('Dirección', `<code>${esc(location.origin)}</code>`) +
+  fila('Página', `<code>${esc(location.pathname)}</code>`) +
+  fila('Origen seguro', window.isSecureContext
+    ? '<span class="ok">sí</span> (se permiten service workers)'
+    : '<span class="ojo">no</span> (no habrá service worker ni instalación)');
+
+if (location.hostname !== 'localhost' && location.hostname !== '127.0.0.1' && location.protocol === 'http:') {
+  avisos.push(['ojo', 'Estás por http en una dirección de red: el service worker no se registra y la app no se puede instalar. Para el iPhone hace falta https (GitHub Pages).']);
+}
+if (location.hostname === '127.0.0.1') {
+  avisos.push(['mal', 'Estás en <code>127.0.0.1</code>. <b>No comparte almacenamiento con <code>localhost</code></b>: si registraste el entreno de prueba en localhost, aquí no aparece. Usa siempre la misma dirección.']);
+}
+
+/* --- datos --- */
+let htmlDatos = '', sesionesNueva = null, sesionesVieja = null;
+const CLAVES = ['gimnasio.datos', 'gym3mas1.v1', 'gimnasio.copia-previa'];
+CLAVES.forEach(k => {
+  const v = localStorage.getItem(k);
+  if (v === null) { htmlDatos += fila(k, '<span class="suave">no existe</span>'); return; }
+  let detalle = `${(v.length / 1024).toFixed(1)} KB`;
+  try {
+    const d = JSON.parse(v);
+    const datos = d.datos ? JSON.parse(d.datos) : d;          // copia-previa envuelve el JSON
+    if (Array.isArray(datos.sesiones)) {
+      const series = datos.sesiones.reduce((n, s) => n + Object.values(s.ejercicios || {})
+        .reduce((m, a) => m + (a ? a.length : 0), 0), 0);
+      detalle = `${datos.sesiones.length} ${datos.sesiones.length === 1 ? 'sesión' : 'sesiones'} · ${series} series · esquema ${datos.esquema || datos.version || '1'} · ${(v.length / 1024).toFixed(1)} KB`;
+      if (k === 'gimnasio.datos') sesionesNueva = series;
+      if (k === 'gym3mas1.v1') sesionesVieja = series;
+    }
+  } catch (e) { detalle = '<span class="mal">ilegible</span> · ' + detalle; }
+  htmlDatos += fila(k, detalle);
+});
+const otras = Object.keys(localStorage).filter(k => CLAVES.indexOf(k) === -1);
+htmlDatos += fila('Otras claves', otras.length ? esc(otras.join(', ')) : '<span class="suave">ninguna</span>');
+$('datos').innerHTML = htmlDatos;
+
+if (sesionesVieja !== null && sesionesNueva === null) {
+  avisos.push(['ojo', 'Hay datos de la versión vieja sin migrar. Abre la app nueva (botón de abajo) y volverán a contarse aquí.']);
+}
+if (sesionesVieja !== null && sesionesNueva !== null && sesionesNueva < sesionesVieja) {
+  avisos.push(['mal', 'La clave nueva tiene menos series que la vieja. No borres nada y avísame.']);
+}
+if (sesionesVieja === null && sesionesNueva === null) {
+  avisos.push(['ojo', 'Este navegador no tiene ningún entreno guardado, ni viejo ni nuevo. Si esperabas encontrarlo, seguramente lo registraste en otra dirección u otro navegador.']);
+}
+
+/* --- versión servida --- */
+Promise.all([
+  fetch("js/app.js?x=" + Date.now(), { cache: 'reload' }).then(r => r.text()).catch(() => ''),
+  fetch("js/app.js").then(r => r.text()).catch(() => '')
+]).then(([red, normal]) => {
+  const ver = t => { const m = t.match(/VERSION_APP\s*=\s*'([^']+)'/); return m ? m[1] : '?'; };
+  const vRed = ver(red), vNormal = ver(normal);
+  let h = fila('En el servidor', `<b>${esc(vRed)}</b>`) +
+          fila('Lo que te sirve el navegador', `<b>${esc(vNormal)}</b>`);
+  if (vRed !== vNormal) {
+    h += fila('', '<span class="mal">Distintas: tienes una copia vieja cacheada. Pulsa el botón de abajo y recarga.</span>');
+    avisos.unshift(['mal', 'El navegador te está sirviendo una versión antigua de la app (' + esc(vNormal) + ') aunque en el servidor está la ' + esc(vRed) + '. Ese es el fallo: borra la caché con el botón de abajo.']);
+  } else {
+    h += fila('', '<span class="ok">Coinciden: estás viendo la versión actual.</span>');
+  }
+  $('version').innerHTML = h;
+  pintarAvisos();
+});
+
+/* --- service worker --- */
+(async function () {
+  let h = '';
+  if (!('serviceWorker' in navigator)) h += fila('Service worker', 'no soportado');
+  else {
+    const rs = await navigator.serviceWorker.getRegistrations();
+    h += fila('Registros', rs.length ? rs.map(r => esc(r.scope)).join('<br>') : '<span class="suave">ninguno</span>');
+    h += fila('Controlando', navigator.serviceWorker.controller ? '<span class="ojo">sí</span>' : 'no');
+  }
+  if ('caches' in window) {
+    const ks = await caches.keys();
+    h += fila('Cachés', ks.length ? esc(ks.join(', ')) : '<span class="suave">ninguna</span>');
+  }
+  $('sw').innerHTML = h;
+})();
+
+function pintarAvisos() {
+  $('veredicto').innerHTML = avisos.length
+    ? avisos.map(a => `<div class="aviso ${a[0] === 'mal' ? 'revisar' : 'nuevo'}">${a[1]}</div>`).join('')
+    : '<div class="aviso subir"><b>&#10003; Todo correcto</b>No veo nada raro en este navegador.</div>';
+}
+pintarAvisos();
+
+$('limpiar').addEventListener('click', async () => {
+  if ('serviceWorker' in navigator) {
+    const rs = await navigator.serviceWorker.getRegistrations();
+    await Promise.all(rs.map(r => r.unregister()));
+  }
+  if ('caches' in window) {
+    const ks = await caches.keys();
+    await Promise.all(ks.map(k => caches.delete(k)));
+  }
+  alert('Service worker y cachés borrados. Tus entrenos siguen intactos.\n\nAhora recarga la app.');
+  location.reload();
+});
+</script>
+</body>
+</html>
