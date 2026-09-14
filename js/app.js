@@ -204,7 +204,7 @@ const App = (function () {
 
     let filas = '';
     series.forEach((x, i) => { filas += filaGuardada(ejId, i, x.peso, x.reps); });
-    filas += `<div class="etiquetas"><span>kg</span><span>${unidad}</span></div>`;
+    filas += `<div class="etiquetas"><span>${Rutina.pesoPorMancuerna(ejId) ? 'kg por mancuerna' : 'kg'}</span><span>${unidad}</span></div>`;
     filas += filaNueva(ejId, nueva[ejId].peso, nueva[ejId].reps);
 
     const completo = series.length >= objetivo;
@@ -220,6 +220,7 @@ const App = (function () {
       <div class="ej-cuerpo ${abierto ? '' : 'oculto'}">
         <div class="aviso ${an.estado}" style="margin-top:12px"><b>${esc(an.titulo)}</b>${esc(an.mensaje)}</div>
         ${e.nota ? `<p class="peque suave">${esc(e.nota)}</p>` : ''}
+        ${Rutina.notaPeso(ejId) ? `<p class="peque" style="color:var(--acento)">${esc(Rutina.notaPeso(ejId))}</p>` : ''}
         ${filas}
         <div class="acciones-serie">
           <button class="btn" data-a="add" data-ej="${ejId}">&#10003; Guardar serie</button>
@@ -449,6 +450,7 @@ const App = (function () {
 
     html += `<div class="tarjeta">
       <h3>Ajuste de este ejercicio</h3>
+      ${e && Rutina.notaPeso(ejId) ? `<p class="peque" style="color:var(--acento)">${esc(Rutina.notaPeso(ejId))}</p>` : ''}
       <p class="peque suave">${e ? 'Grupo: ' + ETIQUETA_GRUPO[e.grupo] + '. Intensidad objetivo: <b>' + Rutina.intensidad() + '</b>. ' : ''}Puedes cambiar el salto si en tu gimnasio no hay discos de ese tamaño.</p>
       <div class="fila" style="margin-top:8px">
         <span class="peque">Salto de peso</span>
@@ -841,5 +843,5 @@ const App = (function () {
   };
 })();
 
-const VERSION_APP = '1.1.0';
+const VERSION_APP = '1.1.1';
 document.addEventListener('DOMContentLoaded', App.init);

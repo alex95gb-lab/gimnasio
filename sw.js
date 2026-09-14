@@ -9,7 +9,7 @@
      versión se precarga entera en 'install', así que no se mezclan archivos
      de dos versiones distintas.
 */
-const CACHE = 'rutina3mas1-v4';
+const CACHE = 'rutina3mas1-v5';
 const MARGEN_RED = 2500;
 
 const ARCHIVOS = [
