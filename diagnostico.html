@@ -134,14 +134,19 @@ function pintarAvisos() {
 pintarAvisos();
 
 $('limpiar').addEventListener('click', async () => {
+  const borrarCaches = async () => {
+    if ('caches' in window) { const ks = await caches.keys(); await Promise.all(ks.map(k => caches.delete(k))); }
+  };
   if ('serviceWorker' in navigator) {
     const rs = await navigator.serviceWorker.getRegistrations();
     await Promise.all(rs.map(r => r.unregister()));
   }
-  if ('caches' in window) {
-    const ks = await caches.keys();
-    await Promise.all(ks.map(k => caches.delete(k)));
-  }
+  await borrarCaches();
+  // machaca también la caché del navegador (misma lógica que Ajustes → Forzar actualización)
+  const urls = ['index.html', 'sw.js', 'manifest.webmanifest', 'css/estilos.css', 'js/rutina.js', 'js/datos.js',
+                'js/progresion.js', 'js/volumen.js', 'js/graficas.js', 'js/app.js'];
+  await Promise.all(urls.map(u => fetch(u, { cache: 'reload' }).catch(() => {})));
+  await borrarCaches();
   alert('Service worker y cachés borrados. Tus entrenos siguen intactos.\n\nAhora recarga la app.');
   location.reload();
 });

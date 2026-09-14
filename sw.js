@@ -9,7 +9,7 @@
      versión se precarga entera en 'install', así que no se mezclan archivos
      de dos versiones distintas.
 */
-const CACHE = 'rutina3mas1-v5';
+const CACHE = 'rutina3mas1-v6';
 const MARGEN_RED = 2500;
 
 const ARCHIVOS = [
@@ -28,10 +28,22 @@ const ARCHIVOS = [
   './iconos/icono-180.png'
 ];
 
+/* Cada archivo se pide saltándose las cachés intermedias: 'reload' ignora la
+   del navegador (GitHub Pages le deja guardar 10 min) y el '?v=' cambia la
+   dirección, así que tampoco sirve la del CDN. Se guarda con su nombre limpio.
+   Sin esto, una versión nueva podía instalarse con archivos de la anterior. */
+function descargarFresco(cache, url) {
+  const fresco = url + (url.indexOf('?') === -1 ? '?' : '&') + 'v=' + CACHE;
+  return fetch(fresco, { cache: 'reload' }).then(resp => {
+    if (!resp.ok) throw new Error('No se pudo descargar ' + url + ' (' + resp.status + ')');
+    return cache.put(url, resp);
+  });
+}
+
 self.addEventListener('install', e => {
   e.waitUntil(
     caches.open(CACHE)
-      .then(c => c.addAll(ARCHIVOS))
+      .then(c => Promise.all(ARCHIVOS.map(url => descargarFresco(c, url))))
       .then(() => self.skipWaiting())
   );
 });

@@ -583,19 +583,33 @@ const App = (function () {
     }).catch(() => { el.textContent = 'no disponible'; });
   }
 
-  /* Borra service worker y cachés (NO los datos) y recarga */
+  /* Borra service worker y cachés (NO los datos) y recarga.
+     Orden importante:
+     1. se desregistra el service worker y se borran sus cachés;
+     2. se vuelven a pedir los archivos de esta página con cache:'reload', que
+        machaca la caché del navegador (GitHub Pages deja guardar 10 min); sin
+        esto, al recargar se volvía a leer el app.js viejo;
+     3. se borran otra vez las cachés: el service worker saliente sigue
+        atendiendo esta página hasta recargar y puede haberlas recreado en el paso 2. */
   function forzarActualizacion() {
-    const tareas = [];
-    if ('caches' in window) {
-      tareas.push(caches.keys().then(ks => Promise.all(ks.map(k => caches.delete(k)))));
-    }
-    if ('serviceWorker' in navigator) {
-      tareas.push(navigator.serviceWorker.getRegistrations()
-        .then(rs => Promise.all(rs.map(r => r.unregister()))).catch(() => {}));
-    }
-    Promise.all(tareas).catch(() => {}).then(() => {
-      location.replace(location.pathname + '?nueva=' + Date.now());
-    });
+    const borrarCaches = () => ('caches' in window)
+      ? caches.keys().then(ks => Promise.all(ks.map(k => caches.delete(k)))).catch(() => {})
+      : Promise.resolve();
+    const desregistrar = () => ('serviceWorker' in navigator)
+      ? navigator.serviceWorker.getRegistrations().then(rs => Promise.all(rs.map(r => r.unregister()))).catch(() => {})
+      : Promise.resolve();
+    const refrescarNavegador = () => {
+      const urls = new Set(['index.html', 'sw.js', 'manifest.webmanifest']);
+      document.querySelectorAll('script[src]').forEach(s => urls.add(s.getAttribute('src')));
+      document.querySelectorAll('link[rel="stylesheet"]').forEach(l => urls.add(l.getAttribute('href')));
+      return Promise.all([...urls].map(u => fetch(u, { cache: 'reload' }).catch(() => {})));
+    };
+
+    Promise.all([desregistrar(), borrarCaches()])
+      .then(refrescarNavegador)
+      .then(borrarCaches)
+      .catch(() => {})
+      .then(() => { location.replace(location.pathname + '?nueva=' + Date.now()); });
   }
 
   /* ============================================================
@@ -843,5 +857,5 @@ const App = (function () {
   };
 })();
 
-const VERSION_APP = '1.1.1';
+const VERSION_APP = '1.1.2';
 document.addEventListener('DOMContentLoaded', App.init);
