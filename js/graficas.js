@@ -16,7 +16,8 @@ const Grafica = {
     const pesos = puntos.map(p => p.peso);
     let max = Math.max.apply(null, pesos);
     let min = Math.min.apply(null, pesos);
-    if (max === min) { max = max + (max === 0 ? 1 : max * 0.1); min = Math.max(0, min - (min === 0 ? 0 : min * 0.1)); }
+    // todos iguales: se abre un margen (vale también para lastre 0 o asistencia negativa)
+    if (max === min) { const margen = Math.abs(max) * 0.1 || 1; max = max + margen; min = min === 0 ? 0 : min - margen; }
     const maxVol = Math.max.apply(null, puntos.map(p => p.volumen)) || 1;
 
     const x = i => puntos.length === 1 ? mIzq + w / 2 : mIzq + (i * w) / (puntos.length - 1);

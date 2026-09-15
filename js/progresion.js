@@ -8,9 +8,38 @@
    - Si llevas 3 sesiones seguidas por debajo del rango bajo ->
      "Valora bajar peso o revisar técnica".
    Las tendencias NO tocan nada: solo informan para que decidas tú.
+
+   Forma del ejercicio (cada serie guarda 'modo'):
+   - 'bi'  bilateral: una carga para los dos lados; el peso es el total.
+   - 'uni' unilateral: cada lado con su carga; el peso es el de un lado.
+   Son progresiones SEPARADAS: no se convierte una en otra (12,5 kg con un
+   brazo no equivale a 25 kg con los dos). La regla se aplica a la última
+   sesión hecha de la misma forma.
+
+   Peso corporal (dominadas, fondos): el número es lastre.
+   0 = peso corporal · positivo = lastre · negativo = asistencia.
    ============================================================ */
 
 const Progresion = {
+
+  modoDe(serie, ejId) {
+    return serie && (serie.modo === 'uni' || serie.modo === 'bi') ? serie.modo : Rutina.ladoPorDefecto(ejId);
+  },
+
+  nombreModo(modo) { return modo === 'uni' ? 'unilateral' : 'bilateral'; },
+
+  /* Cómo se escribe un peso según el ejercicio.
+     corto: para listas de series ("PC+10", "18kg"). */
+  formatoPeso(peso, ejId, modo, corto) {
+    peso = Number(peso) || 0;
+    if (Rutina.pesoCorporal(ejId)) {
+      if (peso === 0) return corto ? 'PC' : 'peso corporal';
+      const signo = peso > 0 ? '+' : '−';
+      return corto ? `PC${signo}${this.num(Math.abs(peso))}` : `peso corporal ${signo} ${this.num(Math.abs(peso))} kg`;
+    }
+    if (corto) return `${this.num(peso)}kg`;
+    return `${this.num(peso)} kg${modo === 'uni' ? ' por lado' : ''}`;
+  },
 
   /* Peso de trabajo de una sesión: el peso más repetido; a igualdad, el mayor */
   pesoTrabajo(series) {
@@ -44,16 +73,17 @@ const Progresion = {
 
   redondear(n) { return Math.round(n * 100) / 100; },
 
-  /* Diagnóstico principal de un ejercicio */
-  analizar(ejId) {
+  /* Diagnóstico principal de un ejercicio.
+     modo: 'uni' | 'bi'. Si no se indica, la forma de la última vez. */
+  analizar(ejId, modo) {
     const e = Rutina.ejercicio(ejId);
-    const hist = DB.historial(ejId);
     const inc = DB.incremento(ejId);
 
     /* Ejercicio que ya no está en la rutina: su historial se conserva
        y se puede consultar, pero no hay rango objetivo con el que juzgar. */
     if (!e) {
-      const ultima = hist.length ? hist[hist.length - 1] : null;
+      const todo = DB.historial(ejId);
+      const ultima = todo.length ? todo[todo.length - 1] : null;
       return {
         estado: 'archivado',
         titulo: 'Ejercicio archivado',
@@ -65,26 +95,40 @@ const Progresion = {
       };
     }
 
+    modo = modo || DB.ultimoModo(ejId);
+    const pc = Rutina.pesoCorporal(ejId);
+    const hist = DB.historial(ejId, modo);
+    const fmt = p => this.formatoPeso(p, ejId, modo);
+    // la forma solo se nombra si no es la habitual o si se han usado las dos
+    const etiqueta = (!pc && (modo !== Rutina.ladoPorDefecto(ejId) || DB.modosUsados(ejId).length > 1))
+      ? ` (${this.nombreModo(modo)})` : '';
+
     if (!hist.length) {
+      const hayOtraForma = DB.historial(ejId).length > 0;
       return {
         estado: 'nuevo',
-        titulo: 'Primera vez',
-        mensaje: `Sin historial todavía. Elige un peso con el que llegues a ${e.min} repeticiones limpias.`,
-        pesoSugerido: null, repsSugeridas: e.min, incremento: inc
+        titulo: hayOtraForma && !pc ? `Primera vez en ${this.nombreModo(modo)}` : 'Primera vez',
+        mensaje: pc
+          ? `Sin historial todavía. Empieza con peso corporal y busca ${e.min} repeticiones limpias; el lastre, cuando te sobre.`
+          : hayOtraForma
+            ? `Lo que llevas ${modo === 'uni' ? 'en bilateral' : 'en unilateral'} no sirve de referencia para esta forma. Elige un peso con el que llegues a ${e.min} repeticiones limpias.`
+            : `Sin historial todavía. Elige un peso con el que llegues a ${e.min} repeticiones limpias.`,
+        pesoSugerido: pc ? 0 : null, repsSugeridas: e.min, incremento: inc
       };
     }
 
     const ultima = hist[hist.length - 1];
     const series = ultima.series;
     const peso = this.pesoTrabajo(series);
+    const u = Rutina.unidad(ejId) === 'seg' ? ' s' : ' reps';
 
     // 1) ¿Toca subir?
     if (this.mismoPesoEnTodas(series) && this.todasEnRangoAlto(ejId, series)) {
       const nuevo = this.redondear(series[0].peso + inc);
       return {
         estado: 'subir',
-        titulo: `Sube peso en ${e.nombre}`,
-        mensaje: `Completaste ${series.length} series de ${e.max}${Rutina.unidad(ejId) === "seg" ? " s" : " reps"} con ${this.num(series[0].peso)} kg. Sube a ${this.num(nuevo)} kg (+${this.num(inc)}).`,
+        titulo: `Sube peso en ${e.nombre}${etiqueta}`,
+        mensaje: `Completaste ${series.length} series de ${e.max}${u} con ${fmt(series[0].peso)}. Sube a ${fmt(nuevo)} (+${this.num(inc)} kg).`,
         pesoSugerido: nuevo, repsSugeridas: e.min, incremento: inc, pesoAnterior: series[0].peso
       };
     }
@@ -92,10 +136,12 @@ const Progresion = {
     // 2) ¿Tres sesiones seguidas por debajo del rango bajo?
     const ultimas3 = hist.slice(-3);
     if (ultimas3.length === 3 && ultimas3.every(h => this.porDebajoDelRango(ejId, h.series))) {
+      // con peso corporal se puede bajar de 0: eso es asistencia
+      const bajar = this.redondear(pc ? peso - inc : Math.max(0, peso - inc));
       return {
         estado: 'revisar',
         titulo: 'Valora bajar peso o revisar técnica',
-        mensaje: `Llevas 3 sesiones sin alcanzar las ${e.min} repeticiones. Bajar a ${this.num(this.redondear(Math.max(0, peso - inc)))} kg y consolidar suele ir mejor que insistir.`,
+        mensaje: `Llevas 3 sesiones sin alcanzar las ${e.min} repeticiones. Bajar a ${fmt(bajar)} y consolidar suele ir mejor que insistir.`,
         pesoSugerido: peso, repsSugeridas: e.min, incremento: inc
       };
     }
@@ -107,22 +153,27 @@ const Progresion = {
       estado: 'mantener',
       titulo: 'Mantén peso',
       mensaje: corta
-        ? `Última: ${this.resumenSeries(series, ejId)}. Fue una sesión corta (${series.length} de ${e.series} series), así que no cuenta para subir peso. Repite ${this.num(peso)} kg.`
-        : `Última: ${this.resumenSeries(series, ejId)}. Repite ${this.num(peso)} kg y busca ${e.max} en ${faltan === 1 ? 'la serie que falta' : 'todas las series'}.`,
+        ? `Última: ${this.resumenSeries(series, ejId)}. Fue una sesión corta (${series.length} de ${e.series} series), así que no cuenta para subir peso. Repite ${fmt(peso)}.`
+        : `Última: ${this.resumenSeries(series, ejId)}. Repite ${fmt(peso)} y busca ${e.max} en ${faltan === 1 ? 'la serie que falta' : 'todas las series'}.`,
       pesoSugerido: peso, repsSugeridas: Math.min(e.max, (Math.max(...series.map(s => s.reps)) || e.min)), incremento: inc
     };
   },
 
-  /* Panel de tendencias (solo informativo) */
-  tendencias(ejId) {
-    const hist = DB.historial(ejId);
-    if (!hist.length) return { sesiones: 0 };
+  /* Panel de tendencias (solo informativo), para una forma concreta */
+  tendencias(ejId, modo) {
+    modo = modo || DB.ultimoModo(ejId);
+    const pc = Rutina.pesoCorporal(ejId);
+    const hist = DB.historial(ejId, modo);
+    if (!hist.length) return { sesiones: 0, modo };
 
-    let mejorPeso = 0, mejorSerie = null, mejorE1RM = 0;
+    let mejorPeso = -Infinity, mejorSerie = null, mejorPuntuacion = -Infinity, mejorE1RM = 0;
     hist.forEach(h => h.series.forEach(s => {
       if (s.peso > mejorPeso) mejorPeso = s.peso;
-      const e1rm = s.peso > 0 ? s.peso * (1 + s.reps / 30) : s.reps;   // Epley
-      if (e1rm > mejorE1RM) { mejorE1RM = e1rm; mejorSerie = s; }
+      // con peso corporal no sabemos cuánto pesas: manda el lastre y, a igualdad, las reps
+      const puntuacion = pc ? s.peso * 1000 + s.reps
+                            : (s.peso > 0 ? s.peso * (1 + s.reps / 30) : s.reps);   // Epley
+      if (puntuacion > mejorPuntuacion) { mejorPuntuacion = puntuacion; mejorSerie = s; }
+      if (!pc && s.peso > 0) mejorE1RM = Math.max(mejorE1RM, s.peso * (1 + s.reps / 30));
     }));
 
     // Sesiones seguidas sin subir el peso de trabajo
@@ -133,19 +184,19 @@ const Progresion = {
       if (pesos[i] >= ultimo) estancadas++; else break;
     }
 
-    // Última sesión en la que el peso de trabajo fue mayor que en todas las anteriores
+    // Última sesión en la que el peso de trabajo fue mayor que en la anterior
     let idxUltimaSubida = 0;
     for (let i = 1; i < pesos.length; i++) if (pesos[i] > pesos[i - 1]) idxUltimaSubida = i;
     const fechaUltimaSubida = hist[idxUltimaSubida].fecha;
     const dias = Math.floor((Date.now() - DB.desdeIso(fechaUltimaSubida).getTime()) / 86400000);
     const semanas = Math.floor(dias / 7);
 
-    // Volumen por sesión (kg x reps), para la gráfica
+    // Para la gráfica: con peso corporal las barras son repeticiones totales
     const puntos = hist.map(h => ({
       fecha: h.fecha,
       peso: this.pesoTrabajo(h.series),
       reps: h.series.reduce((n, s) => n + s.reps, 0),
-      volumen: h.series.reduce((n, s) => n + (s.peso || 1) * s.reps, 0),
+      volumen: h.series.reduce((n, s) => n + (pc ? s.reps : (s.peso || 1) * s.reps), 0),
       series: h.series.length
     }));
 
@@ -157,13 +208,14 @@ const Progresion = {
     else nota = 'Progresión normal, sin estancamiento largo.';
 
     return {
+      modo, pc,
       sesiones: hist.length, mejorPeso, mejorSerie, mejorE1RM: Math.round(mejorE1RM * 10) / 10,
       estancadas, semanasSinProgresar: semanas, fechaUltimaSubida, nota, puntos,
       pesoActual: ultimo
     };
   },
 
-  /* Avisos de "sube peso" pendientes en toda la rutina */
+  /* Avisos de "sube peso" pendientes en toda la rutina (forma de la última vez) */
   avisos() {
     return Rutina.ids()
       .map(id => ({ id, a: this.analizar(id) }))
@@ -177,6 +229,9 @@ const Progresion = {
 
   resumenSeries(series, ejId) {
     const u = Rutina.unidad(ejId) === 'seg' ? 's' : '';
-    return series.map(s => `${this.num(s.peso)}kg x${s.reps}${u}`).join(' · ');
+    const texto = series.map(s => `${this.formatoPeso(s.peso, ejId, null, true)} x${s.reps}${u}`).join(' · ');
+    const unilateral = series.length > 0 && !Rutina.pesoCorporal(ejId) &&
+                       series.every(s => this.modoDe(s, ejId) === 'uni');
+    return texto + (unilateral ? ' · por lado' : '');
   }
 };

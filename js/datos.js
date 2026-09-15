@@ -27,7 +27,7 @@ const DB = (function () {
   const CLAVE = 'gimnasio.datos';               // estable, para siempre
   const CLAVES_HEREDADAS = ['gym3mas1.v1'];     // versiones anteriores de la app
   const CLAVE_COPIA = 'gimnasio.copia-previa';  // copia literal antes de migrar
-  const ESQUEMA = 2;                            // esquema que entiende esta versión
+  const ESQUEMA = 3;                            // esquema que entiende esta versión
 
   let soloLectura = false;
   let informe = { ok: true, esquema: ESQUEMA, migrado: false, desde: null, origen: CLAVE, mensaje: '' };
@@ -63,6 +63,22 @@ const DB = (function () {
       }
       delete d.version;
       d.esquema = 2;
+      return d;
+    },
+
+    /* 2 -> 3 : cada serie guarda si se hizo unilateral ('uni': cada lado con su
+       carga) o bilateral ('bi': una carga para los dos). A lo ya registrado se le
+       pone la forma por defecto de su ejercicio EN ESTE MOMENTO y queda escrita:
+       si mañana cambia la plantilla, el historial no cambia de significado.
+       Pesos, repeticiones y fechas no se tocan. */
+    2: function (d) {
+      d.sesiones.forEach(s => Object.keys(s.ejercicios || {}).forEach(id => {
+        const def = (typeof Rutina !== 'undefined' && Rutina.ladoPorDefecto) ? Rutina.ladoPorDefecto(id) : 'bi';
+        (s.ejercicios[id] || []).forEach(serie => {
+          if (serie.modo !== 'uni' && serie.modo !== 'bi') serie.modo = def;
+        });
+      }));
+      d.esquema = 3;
       return d;
     }
   };
@@ -304,11 +320,33 @@ const DB = (function () {
       return this.sesiones().filter(s => this.tieneSeries(s));
     },
 
-    /* Historial de un ejercicio: [{sesionId, fecha, dia, series}] de vieja a nueva */
-    historial(ejId) {
+    /* Historial de un ejercicio: [{sesionId, fecha, dia, series}] de vieja a nueva.
+       Con 'modo' ('uni'/'bi') solo cuenta las series hechas de esa forma: son
+       progresiones distintas y no se mezclan. */
+    historial(ejId, modo) {
+      const def = Rutina.ladoPorDefecto(ejId);
       return this.sesiones()
-        .filter(s => s.ejercicios[ejId] && s.ejercicios[ejId].length > 0)
-        .map(s => ({ sesionId: s.id, fecha: s.fecha, dia: s.dia, series: s.ejercicios[ejId] }));
+        .map(s => {
+          const todas = s.ejercicios[ejId] || [];
+          const series = modo ? todas.filter(x => (x.modo || def) === modo) : todas;
+          return { sesionId: s.id, fecha: s.fecha, dia: s.dia, series };
+        })
+        .filter(h => h.series.length > 0);
+    },
+
+    /* Forma (uni/bi) de la última vez que se hizo; si nunca, la de la plantilla */
+    ultimoModo(ejId) {
+      const h = this.historial(ejId);
+      if (!h.length) return Rutina.ladoPorDefecto(ejId);
+      const ult = h[h.length - 1].series;
+      return ult[ult.length - 1].modo || Rutina.ladoPorDefecto(ejId);
+    },
+
+    /* Formas con las que hay historial: ['bi'], ['uni'] o las dos */
+    modosUsados(ejId) {
+      const def = Rutina.ladoPorDefecto(ejId), vistos = {};
+      this.historial(ejId).forEach(h => h.series.forEach(x => { vistos[x.modo || def] = true; }));
+      return Object.keys(vistos);
     },
 
     /* Ids con historial que ya no están en la rutina actual */

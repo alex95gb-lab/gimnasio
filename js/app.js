@@ -10,6 +10,8 @@ const App = (function () {
   let main, tabs, toastTimer;
   const abiertos = new Set();      // tarjetas de ejercicio desplegadas
   const nueva = {};                // valores de la fila "nueva serie" por ejercicio
+  const modoElegido = {};          // bilateral/unilateral elegido antes de apuntar series
+  const modoFicha = {};            // forma que se está viendo en la ficha de cada ejercicio
 
   /* ---------- utilidades ---------- */
   const MESES = ['enero','febrero','marzo','abril','mayo','junio','julio','agosto','septiembre','octubre','noviembre','diciembre'];
@@ -185,10 +187,27 @@ const App = (function () {
     render(html, 'Entrenamiento', `Día ${d.numero} · ${d.nombre}`, true);
   }
 
+  /* Forma en que se hace hoy: la de las series ya apuntadas en esta sesión,
+     la elegida con el interruptor, o la de la última vez */
+  function modoSesion(s, ejId) {
+    const series = s.ejercicios[ejId] || [];
+    if (series.length) return series[0].modo || Rutina.ladoPorDefecto(ejId);
+    return modoElegido[ejId] || DB.ultimoModo(ejId);
+  }
+
+  function interruptorModo(ejId, modo, accion) {
+    return `<div class="segmento" role="group" aria-label="Forma de hacer el ejercicio">
+      <button class="${modo === 'bi' ? 'activo' : ''}" data-a="${accion}" data-ej="${ejId}" data-modo="bi">Bilateral</button>
+      <button class="${modo === 'uni' ? 'activo' : ''}" data-a="${accion}" data-ej="${ejId}" data-modo="uni">Unilateral</button>
+    </div>`;
+  }
+
   function tarjetaEjercicio(s, ejId) {
     const e = Rutina.ejercicio(ejId);
     const series = s.ejercicios[ejId] || [];
-    const an = Progresion.analizar(ejId);
+    const modo = modoSesion(s, ejId);
+    const pc = Rutina.pesoCorporal(ejId);
+    const an = Progresion.analizar(ejId, modo);
     const abierto = abiertos.has(ejId);
     const unidad = Rutina.unidad(ejId) === 'seg' ? 'segundos' : 'reps';
     const objetivo = Rutina.seriesObjetivo(ejId, s.dia);   // el comodín pide menos series
@@ -203,8 +222,9 @@ const App = (function () {
     }
 
     let filas = '';
-    series.forEach((x, i) => { filas += filaGuardada(ejId, i, x.peso, x.reps); });
-    filas += `<div class="etiquetas"><span>${Rutina.pesoPorMancuerna(ejId) ? 'kg por mancuerna' : 'kg'}</span><span>${unidad}</span></div>`;
+    series.forEach((x, i) => { filas += filaGuardada(ejId, i, x.peso, x.reps, modo); });
+    const etiquetaPeso = pc ? 'lastre (kg)' : (modo === 'uni' ? 'kg por lado' : 'kg');
+    filas += `<div class="etiquetas"><span>${etiquetaPeso}</span><span>${unidad}</span></div>`;
     filas += filaNueva(ejId, nueva[ejId].peso, nueva[ejId].reps);
 
     const completo = series.length >= objetivo;
@@ -220,7 +240,12 @@ const App = (function () {
       <div class="ej-cuerpo ${abierto ? '' : 'oculto'}">
         <div class="aviso ${an.estado}" style="margin-top:12px"><b>${esc(an.titulo)}</b>${esc(an.mensaje)}</div>
         ${e.nota ? `<p class="peque suave">${esc(e.nota)}</p>` : ''}
-        ${Rutina.notaPeso(ejId) ? `<p class="peque" style="color:var(--acento)">${esc(Rutina.notaPeso(ejId))}</p>` : ''}
+        ${pc ? '' : interruptorModo(ejId, modo, 'modo')}
+        <p class="peque suave" style="margin:6px 0 0">${pc
+          ? 'Apunta el <b>lastre</b>: 0 es peso corporal, positivo es lastre añadido, negativo es asistencia.'
+          : modo === 'uni'
+            ? 'Cada lado con su carga (mancuerna en cada mano, muñequera, una pierna): apunta el peso de <b>un lado</b>.'
+            : 'Una carga para los dos lados (barra, máquina, polea con barra): apunta el peso <b>total</b>.'}</p>
         ${filas}
         <div class="acciones-serie">
           <button class="btn" data-a="add" data-ej="${ejId}">&#10003; Guardar serie</button>
@@ -232,11 +257,12 @@ const App = (function () {
   }
 
   /* Serie ya guardada: compacta, editable tocando el número. */
-  function filaGuardada(ejId, i, peso, reps) {
+  function filaGuardada(ejId, i, peso, reps, modo) {
+    const uds = Rutina.pesoCorporal(ejId) ? 'lastre' : (modo === 'uni' ? 'kg/lado' : 'kg');
     return `<div class="serie guardada">
       <span class="idx">${Number(i) + 1}</span>
       <div class="campo"><input inputmode="decimal" data-in="peso" data-ej="${ejId}" data-i="${i}" value="${num(peso)}"></div>
-      <span class="uds">kg &times;</span>
+      <span class="uds">${uds} &times;</span>
       <div class="campo"><input inputmode="numeric" data-in="reps" data-ej="${ejId}" data-i="${i}" value="${reps}"></div>
       <button class="quitar" data-a="quitar" data-ej="${ejId}" data-i="${i}" aria-label="Quitar serie">&times;</button>
     </div>`;
@@ -380,7 +406,7 @@ const App = (function () {
           <span class="barra-dia" style="background:${d.color}"></span>
           <span><b>${esc(Rutina.nombre(ejId))}</b><br>
             <span class="suave peque">${Rutina.prescripcion(ejId)}${t.sesiones ? ' · ' + t.sesiones + (t.sesiones === 1 ? ' sesión' : ' sesiones') : ' · sin datos'}</span></span>
-          <span class="meta">${t.sesiones ? num(t.pesoActual) + ' kg<br>' : ''}<span style="color:${an.estado === 'subir' ? '#51cf66' : an.estado === 'revisar' ? '#ffd8a8' : '#9aa3b2'}">${iconos[an.estado]}</span></span>
+          <span class="meta">${t.sesiones ? esc(Progresion.formatoPeso(t.pesoActual, ejId, t.modo, true)) + (t.modo === 'uni' && !t.pc ? '/lado' : '') + '<br>' : ''}<span style="color:${an.estado === 'subir' ? '#51cf66' : an.estado === 'revisar' ? '#ffd8a8' : '#9aa3b2'}">${iconos[an.estado]}</span></span>
         </button></li>`;
       });
       html += '</ul></div>';
@@ -414,23 +440,36 @@ const App = (function () {
     const e = Rutina.ejercicio(ejId);
     // un ejercicio archivado (fuera de la rutina) sigue siendo consultable
     if (!e && !DB.historial(ejId).length) { ir('#/ejercicios'); return; }
-    const an = Progresion.analizar(ejId);
-    const t = Progresion.tendencias(ejId);
-    const hist = DB.historial(ejId).slice().reverse();
+    const pc = Rutina.pesoCorporal(ejId);
+    const usados = DB.modosUsados(ejId);
+    // bilateral y unilateral son progresiones distintas: la ficha enseña una cada vez
+    if (!modoFicha[ejId] || usados.indexOf(modoFicha[ejId]) === -1) modoFicha[ejId] = DB.ultimoModo(ejId);
+    const modo = modoFicha[ejId];
+    const an = Progresion.analizar(ejId, modo);
+    const t = Progresion.tendencias(ejId, modo);
+    const hist = DB.historial(ejId, modo).slice().reverse();
     const unidad = Rutina.unidad(ejId) === 'seg' ? 's' : '';
 
-    let html = `<div class="aviso ${an.estado}"><b>${esc(an.titulo)}</b>${esc(an.mensaje)}</div>`;
+    let html = '';
+    if (usados.length > 1) {
+      html += `${interruptorModo(ejId, modo, 'modo-ficha')}
+        <p class="peque suave" style="margin:6px 0 12px">Lo has hecho de las dos formas. Son progresiones separadas:
+        aquí ves solo la ${modo === 'uni' ? 'unilateral' : 'bilateral'}.</p>`;
+    }
+    html += `<div class="aviso ${an.estado}"><b>${esc(an.titulo)}</b>${esc(an.mensaje)}</div>`;
 
     if (t.sesiones) {
       html += `<div class="tarjeta">
-        <div class="fila"><h3>Evolución</h3><span class="pill">peso de trabajo</span></div>
-        ${Grafica.linea(t.puntos, { unidad: 'kg' })}
-        <p class="peque suave" style="margin-top:6px">Las barras son el volumen de cada sesión (kg &times; repeticiones).</p>
+        <div class="fila"><h3>Evolución</h3><span class="pill">${pc ? 'lastre' : (modo === 'uni' ? 'peso por lado' : 'peso de trabajo')}</span></div>
+        ${Grafica.linea(t.puntos, { unidad: pc ? 'kg de lastre' : 'kg' })}
+        <p class="peque suave" style="margin-top:6px">${pc
+          ? 'La línea es el lastre (0 = peso corporal). Las barras, las repeticiones totales de cada sesión.'
+          : 'Las barras son el volumen de cada sesión (kg &times; repeticiones).'}</p>
       </div>
 
       <div class="metricas">
-        <div class="metrica"><div class="v">${num(t.mejorPeso)}</div><div class="k">mejor peso (kg)</div></div>
-        <div class="metrica"><div class="v">${num(t.mejorSerie.peso)}&times;${t.mejorSerie.reps}</div><div class="k">mejor serie</div></div>
+        <div class="metrica"><div class="v">${pc ? esc(Progresion.formatoPeso(t.mejorPeso, ejId, modo, true)) : num(t.mejorPeso)}</div><div class="k">${pc ? 'mejor lastre' : (modo === 'uni' ? 'mejor peso (kg/lado)' : 'mejor peso (kg)')}</div></div>
+        <div class="metrica"><div class="v">${pc ? esc(Progresion.formatoPeso(t.mejorSerie.peso, ejId, modo, true)) : num(t.mejorSerie.peso)}&times;${t.mejorSerie.reps}</div><div class="k">mejor serie</div></div>
         <div class="metrica"><div class="v">${t.sesiones}</div><div class="k">sesiones</div></div>
       </div>
 
@@ -440,7 +479,7 @@ const App = (function () {
         <ul class="lista peque suave" style="margin-top:8px">
           <li style="padding:8px 0">Sesiones seguidas sin subir peso: <b style="color:var(--texto)">${t.estancadas}</b></li>
           <li style="padding:8px 0">Última subida de peso: <b style="color:var(--texto)">${fechaCorta(t.fechaUltimaSubida)}</b></li>
-          <li style="padding:8px 0">1RM estimado (Epley): <b style="color:var(--texto)">${num(t.mejorE1RM)} kg</b></li>
+          ${pc ? '' : `<li style="padding:8px 0">1RM estimado (Epley): <b style="color:var(--texto)">${num(t.mejorE1RM)} kg${modo === 'uni' ? ' por lado' : ''}</b></li>`}
         </ul>
         <p class="peque suave" style="margin-top:8px">La app no cambia nada por su cuenta: decides tú.</p>
       </div>`;
@@ -450,7 +489,6 @@ const App = (function () {
 
     html += `<div class="tarjeta">
       <h3>Ajuste de este ejercicio</h3>
-      ${e && Rutina.notaPeso(ejId) ? `<p class="peque" style="color:var(--acento)">${esc(Rutina.notaPeso(ejId))}</p>` : ''}
       <p class="peque suave">${e ? 'Grupo: ' + ETIQUETA_GRUPO[e.grupo] + '. Intensidad objetivo: <b>' + Rutina.intensidad() + '</b>. ' : ''}Puedes cambiar el salto si en tu gimnasio no hay discos de ese tamaño.</p>
       <div class="fila" style="margin-top:8px">
         <span class="peque">Salto de peso</span>
@@ -468,8 +506,8 @@ const App = (function () {
         const p = Progresion.pesoTrabajo(h.series);
         html += `<tr data-a="ir" data-ruta="#/sesion/${h.sesionId}">
           <td>${fechaCorta(h.fecha)}</td>
-          <td><b>${num(p)} kg</b></td>
-          <td class="series">${h.series.map(x => `${num(x.peso)}&times;${x.reps}${unidad}`).join(' · ')}</td>
+          <td><b>${esc(Progresion.formatoPeso(p, ejId, modo))}</b></td>
+          <td class="series">${h.series.map(x => `${esc(Progresion.formatoPeso(x.peso, ejId, modo, true))}&times;${x.reps}${unidad}`).join(' · ')}</td>
         </tr>`;
       });
       html += '</tbody></table></div>';
@@ -680,7 +718,7 @@ const App = (function () {
       const ses = DB.abrirSesion(el.dataset.dia, hoyIso());
       abiertos.clear();
       const d = Rutina.dia(ses.dia);
-      d.ejercicios.forEach(id => delete nueva[id]);
+      d.ejercicios.forEach(id => { delete nueva[id]; delete modoElegido[id]; });
       abiertos.add(d.ejercicios[0]);
       ir('#/sesion/' + ses.id);
       return;
@@ -696,7 +734,8 @@ const App = (function () {
       const campo = el.dataset.c, i = el.dataset.i, delta = parseFloat(el.dataset.d);
       const input = document.querySelector(`input[data-in="${campo}"][data-ej="${ejId}"][data-i="${i}"]`);
       let v = aNumero(input.value) + delta;
-      if (v < 0) v = 0;
+      // solo con peso corporal tiene sentido bajar de 0 (asistencia)
+      if (v < 0 && !(campo === 'peso' && Rutina.pesoCorporal(ejId))) v = 0;
       v = Math.round(v * 100) / 100;
       input.value = campo === 'reps' ? Math.round(v) : num(v);
       aplicarValor(s, ejId, i, campo, v);
@@ -709,13 +748,33 @@ const App = (function () {
       const peso = aNumero(p.value), reps = Math.round(aNumero(r.value));
       if (reps <= 0) { toast('Pon las repeticiones conseguidas'); r.focus(); return; }
       s.ejercicios[ejId] = s.ejercicios[ejId] || [];
-      s.ejercicios[ejId].push({ peso, reps });
+      s.ejercicios[ejId].push({ peso, reps, modo: modoSesion(s, ejId) });
       nueva[ejId] = { peso, reps };
       DB.guardar();
       refrescarEjercicio(s, ejId);
       toast('Serie ' + s.ejercicios[ejId].length + ' guardada');
       const card = document.getElementById('ej-' + ejId);
       if (card) card.scrollIntoView({ block: 'nearest' });
+      return;
+    }
+
+    /* Bilateral / unilateral: cambia la forma de las series de este ejercicio
+       en esta sesión y la de las siguientes que se apunten */
+    if (a === 'modo') {
+      const m = el.dataset.modo;
+      modoElegido[ejId] = m;
+      const ya = s.ejercicios[ejId] || [];
+      ya.forEach(x => { x.modo = m; });
+      if (ya.length) DB.guardar();
+      delete nueva[ejId];     // vuelve a proponer peso con el historial de esa forma
+      refrescarEjercicio(s, ejId);
+      toast(m === 'uni' ? 'Unilateral: peso de un lado' : 'Bilateral: peso total');
+      return;
+    }
+
+    if (a === 'modo-ficha') {
+      modoFicha[ejId] = el.dataset.modo;
+      vistaEjercicio(ejId);
       return;
     }
 
@@ -857,5 +916,5 @@ const App = (function () {
   };
 })();
 
-const VERSION_APP = '1.1.2';
+const VERSION_APP = '1.2.0';
 document.addEventListener('DOMContentLoaded', App.init);
